@@ -22,8 +22,3 @@ export interface AppRecord {
 export interface AppsRegistry {
   apps: AppRecord[];
 }
-
-export interface CreateOptions {
-  name: string;
-  config: AppFactoryConfig;
-}

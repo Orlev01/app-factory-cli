@@ -1,15 +1,13 @@
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 
-const TOTAL_STEPS = 10;
-
 let currentSpinner: Ora | null = null;
 
-export function stepStart(step: number, message: string): Ora {
+export function stepStart(step: number, message: string, totalSteps: number = 10): Ora {
   if (currentSpinner) {
     currentSpinner.stop();
   }
-  const prefix = chalk.dim(`[${step}/${TOTAL_STEPS}]`);
+  const prefix = chalk.dim(`[${step}/${totalSteps}]`);
   const spinner = ora(`${prefix} ${message}`).start();
   currentSpinner = spinner;
   return spinner;

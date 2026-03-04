@@ -31,10 +31,43 @@ export async function createProject(
   }
 
   const data = await res.json();
-  const projectId: string = data.project.id;
-  const connectionUri: string = data.connection_uris[0].connection_uri;
+  const projectId: string = data.project?.id;
+  if (!projectId) {
+    throw new Error("Neon API response missing project ID");
+  }
+
+  const connectionUri: string = data.connection_uris?.[0]?.connection_uri;
+  if (!connectionUri) {
+    throw new Error("Neon API response missing connection URI");
+  }
 
   return { projectId, connectionUri };
+}
+
+export async function getProjectStatus(
+  apiKey: string,
+  projectId: string
+): Promise<{ active: boolean; name: string; region: string; createdAt: string }> {
+  const res = await fetch(
+    `https://console.neon.tech/api/v2/projects/${projectId}`,
+    {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to get Neon project status: ${res.status} ${body}`);
+  }
+
+  const data = await res.json();
+  const project = data.project;
+  return {
+    active: project.current_state === "active" || project.current_state === "idle",
+    name: project.name,
+    region: project.region_id,
+    createdAt: project.created_at,
+  };
 }
 
 export async function deleteProject(

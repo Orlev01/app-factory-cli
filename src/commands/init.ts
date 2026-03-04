@@ -46,7 +46,7 @@ export async function initCommand(): Promise<void> {
       name: "templateRepo",
       message: "Template repo (org/repo):",
       validate: (v: string) =>
-        v.includes("/") ? true : "Must be in org/repo format",
+        /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(v) ? true : "Must be in org/repo format (e.g. my-org/my-template)",
     },
     {
       type: "input",

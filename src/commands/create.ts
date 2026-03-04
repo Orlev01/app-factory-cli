@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execSync } from "node:child_process";
@@ -14,7 +15,10 @@ import * as github from "../services/github.js";
 import * as template from "../services/template.js";
 import type { AppRecord } from "../types.js";
 
-export async function createCommand(name?: string): Promise<void> {
+export async function createCommand(
+  name?: string,
+  options?: { from?: string }
+): Promise<void> {
   // Verify init was run
   if (!configExists()) {
     error("Config not found. Run `appfactory init` first.");
@@ -53,16 +57,45 @@ export async function createCommand(name?: string): Promise<void> {
   const appName = name!;
   const appDir = path.join(config.appsDirectory, appName);
 
-  console.log(chalk.bold(`\n🏭 Creating app: ${appName}\n`));
+  const fromApp = options?.from ? findApp(options.from) : undefined;
+  if (options?.from && !fromApp) {
+    error(`Source app "${options.from}" not found in registry.`);
+    process.exit(1);
+  }
+
+  if (fromApp && !fs.existsSync(fromApp.localPath)) {
+    error(`Source app local path not found: ${fromApp.localPath}`);
+    process.exit(1);
+  }
+
+  console.log(
+    chalk.bold(
+      `\n🏭 ${fromApp ? `Forking from "${fromApp.name}"` : "Creating app"}: ${appName}\n`
+    )
+  );
 
   // Track what was created for error reporting
   const created: string[] = [];
 
   try {
-    // Step 1: Clone template
-    const s1 = stepStart(1, "Cloning template...");
-    template.cloneTemplate(config.templateRepo, appDir);
-    stepSuccess(s1, "Template cloned");
+    // Step 1: Clone template or copy from source
+    if (fromApp) {
+      const s1 = stepStart(1, `Copying from ${fromApp.name}...`);
+      const EXCLUDE = ["node_modules", ".next", ".env.local", ".git"];
+      fs.cpSync(fromApp.localPath, appDir, {
+        recursive: true,
+        filter: (src) => {
+          const rel = path.relative(fromApp.localPath, src);
+          return !EXCLUDE.some((ex) => rel === ex || rel.startsWith(ex + "/"));
+        },
+      });
+      execSync("git init -b main", { cwd: appDir, stdio: "pipe" });
+      stepSuccess(s1, "Source app copied");
+    } else {
+      const s1 = stepStart(1, "Cloning template...");
+      template.cloneTemplate(config.templateRepo, appDir);
+      stepSuccess(s1, "Template cloned");
+    }
     created.push(`Local directory: ${appDir}`);
 
     // Step 2: Install dependencies
@@ -92,14 +125,22 @@ export async function createCommand(name?: string): Promise<void> {
     });
     stepSuccess(s5, "Environment file written");
 
-    // Step 6: Push database schema
-    const s6 = stepStart(6, "Pushing database schema...");
-    execSync("pnpm db:push", {
-      cwd: appDir,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    stepSuccess(s6, "Database schema pushed");
+    // Step 6: Push database schema (if the template defines the script)
+    const templatePkg = JSON.parse(
+      fs.readFileSync(path.join(appDir, "package.json"), "utf-8")
+    );
+    if (templatePkg.scripts?.["db:push"]) {
+      const s6 = stepStart(6, "Pushing database schema...");
+      execSync("pnpm db:push", {
+        cwd: appDir,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      stepSuccess(s6, "Database schema pushed");
+    } else {
+      const s6 = stepStart(6, "Pushing database schema...");
+      stepFail(s6, "Skipped — template has no db:push script");
+    }
 
     // Step 7: Create GitHub repo
     const s7 = stepStart(7, "Creating GitHub repository...");
@@ -118,7 +159,6 @@ export async function createCommand(name?: string): Promise<void> {
       config.vercelToken,
       appName,
       `${config.githubOrg}/${appName}`,
-      config.githubOrg,
       config.vercelTeamId
     );
     created.push(`Vercel project: ${vercelProjectId}`);
@@ -154,6 +194,22 @@ export async function createCommand(name?: string): Promise<void> {
       deploymentUrl = prodUrl;
     }
 
+    // Update NEXTAUTH_URL if the actual deployment URL differs from the assumed one
+    if (deploymentUrl !== prodUrl) {
+      const envVars = await vercel.listEnvVars(config.vercelToken, vercelProjectId, config.vercelTeamId);
+      const nextauthUrlVar = envVars.find((v) => v.key === "NEXTAUTH_URL");
+      if (nextauthUrlVar) {
+        await vercel.updateEnvVar(
+          config.vercelToken,
+          vercelProjectId,
+          nextauthUrlVar.id,
+          deploymentUrl,
+          ["production"],
+          config.vercelTeamId
+        );
+      }
+    }
+
     // Silently record to apps.json
     const appRecord: AppRecord = {
       name: appName,
@@ -171,6 +227,11 @@ export async function createCommand(name?: string): Promise<void> {
     console.log(`  ${chalk.dim("URL:")}        ${deploymentUrl}`);
     console.log(`  ${chalk.dim("GitHub:")}     https://github.com/${config.githubOrg}/${appName}`);
     console.log(`  ${chalk.dim("Local:")}      ${appDir}`);
+    if (fromApp) {
+      console.log(
+        chalk.yellow("\n  Note: Database schema was copied but data was not migrated.")
+      );
+    }
     console.log("");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
