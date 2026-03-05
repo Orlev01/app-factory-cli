@@ -3,7 +3,7 @@ import ora, { type Ora } from "ora";
 
 let currentSpinner: Ora | null = null;
 
-export function stepStart(step: number, message: string, totalSteps: number = 10): Ora {
+export function stepStart(step: number, message: string, totalSteps: number): Ora {
   if (currentSpinner) {
     currentSpinner.stop();
   }

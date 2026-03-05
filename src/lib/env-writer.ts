@@ -3,21 +3,26 @@ import path from "node:path";
 
 export interface EnvVars {
   databaseUrl: string;
-  nextauthSecret: string;
-  nextauthUrl: string;
+  authSecret: string;
+  authUrl: string;
   resendApiKey: string;
   emailFrom: string;
+  appName: string;
+  appUrl: string;
 }
 
 export function generateEnvContent(vars: EnvVars): string {
   return [
     `DATABASE_URL="${vars.databaseUrl}"`,
     ``,
-    `NEXTAUTH_SECRET="${vars.nextauthSecret}"`,
-    `NEXTAUTH_URL="${vars.nextauthUrl}"`,
+    `AUTH_SECRET="${vars.authSecret}"`,
+    `AUTH_URL="${vars.authUrl}"`,
     ``,
     `RESEND_API_KEY="${vars.resendApiKey}"`,
     `EMAIL_FROM="${vars.emailFrom}"`,
+    ``,
+    `NEXT_PUBLIC_APP_NAME="${vars.appName}"`,
+    `NEXT_PUBLIC_APP_URL="${vars.appUrl}"`,
     ``,
   ].join("\n");
 }

@@ -18,6 +18,16 @@ export function configExists(): boolean {
   return fs.existsSync(CONFIG_FILE);
 }
 
+const REQUIRED_KEYS: (keyof AppFactoryConfig)[] = [
+  "neonApiKey",
+  "vercelToken",
+  "resendApiKey",
+  "githubOrg",
+  "templateRepo",
+  "appsDirectory",
+  "emailFrom",
+];
+
 export function readConfig(): AppFactoryConfig {
   if (!configExists()) {
     throw new Error(
@@ -25,7 +35,32 @@ export function readConfig(): AppFactoryConfig {
     );
   }
   const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
-  return JSON.parse(raw) as AppFactoryConfig;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      "Config file is corrupted (invalid JSON). Run `appfactory init` to recreate it."
+    );
+  }
+
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(
+      "Config file is corrupted. Run `appfactory init` to recreate it."
+    );
+  }
+
+  const config = parsed as Record<string, unknown>;
+  const missing = REQUIRED_KEYS.filter(
+    (key) => typeof config[key] !== "string" || config[key] === ""
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Config is missing required fields: ${missing.join(", ")}. Run \`appfactory init\` to fix.`
+    );
+  }
+
+  return config as unknown as AppFactoryConfig;
 }
 
 export function writeConfig(config: AppFactoryConfig): void {

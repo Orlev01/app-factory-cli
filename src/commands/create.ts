@@ -1,19 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import inquirer from "inquirer";
 import chalk from "chalk";
 import { readConfig, configExists } from "../lib/config.js";
 import { addApp, findApp } from "../lib/registry.js";
 import { isValidAppName, getAppNameError } from "../lib/validation.js";
-import { stepStart, stepSuccess, stepFail, error, success } from "../lib/logger.js";
+import { stepStart, stepSuccess, stepFail, error, success, warn } from "../lib/logger.js";
 import { writeEnvFile } from "../lib/env-writer.js";
 import * as neon from "../services/neon.js";
 import * as vercel from "../services/vercel.js";
 import * as github from "../services/github.js";
 import * as template from "../services/template.js";
 import type { AppRecord } from "../types.js";
+
+const TOTAL_STEPS = 10;
 
 export async function createCommand(
   name?: string,
@@ -74,13 +76,16 @@ export async function createCommand(
     )
   );
 
-  // Track what was created for error reporting
-  const created: string[] = [];
+  // Track created resources for rollback on failure
+  let createdLocalDir = false;
+  let neonProjectId: string | undefined;
+  let githubRepoCreated = false;
+  let vercelProjectId: string | undefined;
 
   try {
     // Step 1: Clone template or copy from source
     if (fromApp) {
-      const s1 = stepStart(1, `Copying from ${fromApp.name}...`);
+      const s1 = stepStart(1, `Copying from ${fromApp.name}...`, TOTAL_STEPS);
       const EXCLUDE = ["node_modules", ".next", ".env.local", ".git"];
       fs.cpSync(fromApp.localPath, appDir, {
         recursive: true,
@@ -89,39 +94,45 @@ export async function createCommand(
           return !EXCLUDE.some((ex) => rel === ex || rel.startsWith(ex + "/"));
         },
       });
-      execSync("git init -b main", { cwd: appDir, stdio: "pipe" });
+      execFileSync("git", ["init", "-b", "main"], { cwd: appDir, stdio: "pipe" });
       stepSuccess(s1, "Source app copied");
     } else {
-      const s1 = stepStart(1, "Cloning template...");
+      const s1 = stepStart(1, "Cloning template...", TOTAL_STEPS);
       template.cloneTemplate(config.templateRepo, appDir);
       stepSuccess(s1, "Template cloned");
     }
-    created.push(`Local directory: ${appDir}`);
+    createdLocalDir = true;
 
     // Step 2: Install dependencies
-    const s2 = stepStart(2, "Installing dependencies...");
+    const s2 = stepStart(2, "Installing dependencies...", TOTAL_STEPS);
     template.installDeps(appDir);
     stepSuccess(s2, "Dependencies installed");
 
     // Step 3: Create Neon database
-    const s3 = stepStart(3, "Creating Neon database...");
+    const s3 = stepStart(3, "Creating Neon database...", TOTAL_STEPS);
     const neonProject = await neon.createProject(config.neonApiKey, appName);
+    neonProjectId = neonProject.projectId;
     stepSuccess(s3, "Neon database created");
-    created.push(`Neon project: ${neonProject.projectId}`);
 
     // Step 4: Generate secrets
-    const s4 = stepStart(4, "Generating secrets...");
-    const nextauthSecret = crypto.randomBytes(32).toString("base64");
+    const s4 = stepStart(4, "Generating secrets...", TOTAL_STEPS);
+    const authSecret = crypto.randomBytes(32).toString("base64");
+    const appDisplayName = appName
+      .split("-")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
     stepSuccess(s4, "Secrets generated");
 
     // Step 5: Write .env.local (localhost URLs for local dev)
-    const s5 = stepStart(5, "Writing .env.local...");
+    const s5 = stepStart(5, "Writing .env.local...", TOTAL_STEPS);
     writeEnvFile(appDir, {
       databaseUrl: neonProject.connectionUri,
-      nextauthSecret,
-      nextauthUrl: "http://localhost:3000",
+      authSecret,
+      authUrl: "http://localhost:3000",
       resendApiKey: config.resendApiKey,
       emailFrom: config.emailFrom,
+      appName: appDisplayName,
+      appUrl: "http://localhost:3000",
     });
     stepSuccess(s5, "Environment file written");
 
@@ -130,57 +141,57 @@ export async function createCommand(
       fs.readFileSync(path.join(appDir, "package.json"), "utf-8")
     );
     if (templatePkg.scripts?.["db:push"]) {
-      const s6 = stepStart(6, "Pushing database schema...");
-      execSync("pnpm db:push", {
+      const s6 = stepStart(6, "Pushing database schema...", TOTAL_STEPS);
+      execFileSync("pnpm", ["db:push"], {
         cwd: appDir,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       });
       stepSuccess(s6, "Database schema pushed");
     } else {
-      const s6 = stepStart(6, "Pushing database schema...");
+      const s6 = stepStart(6, "Pushing database schema...", TOTAL_STEPS);
       stepFail(s6, "Skipped — template has no db:push script");
     }
 
     // Step 7: Create GitHub repo
-    const s7 = stepStart(7, "Creating GitHub repository...");
+    const s7 = stepStart(7, "Creating GitHub repository...", TOTAL_STEPS);
     github.createRepo(config.githubOrg, appName);
+    githubRepoCreated = true;
     stepSuccess(s7, "GitHub repository created");
-    created.push(`GitHub repo: ${config.githubOrg}/${appName}`);
 
     // Step 8: Push to GitHub
-    const s8 = stepStart(8, "Pushing to GitHub...");
+    const s8 = stepStart(8, "Pushing to GitHub...", TOTAL_STEPS);
     github.pushInitialCommit(appDir, config.githubOrg, appName);
     stepSuccess(s8, "Code pushed to GitHub");
 
-    // Step 9: Create Vercel project + set env vars (production URLs)
-    const s9 = stepStart(9, "Setting up Vercel project...");
-    const vercelProjectId = await vercel.createProject(
+    // Step 9: Create Vercel project + set env vars (production + preview URLs)
+    const s9 = stepStart(9, "Setting up Vercel project...", TOTAL_STEPS);
+    vercelProjectId = await vercel.createProject(
       config.vercelToken,
       appName,
       `${config.githubOrg}/${appName}`,
       config.vercelTeamId
     );
-    created.push(`Vercel project: ${vercelProjectId}`);
 
-    // Set production env vars on Vercel (with production URL, not localhost)
     const prodUrl = `https://${appName}.vercel.app`;
     await vercel.setEnvVars(
       config.vercelToken,
       vercelProjectId,
       [
         { key: "DATABASE_URL", value: neonProject.connectionUri, target: ["production", "preview"], type: "encrypted" },
-        { key: "NEXTAUTH_SECRET", value: nextauthSecret, target: ["production", "preview"], type: "encrypted" },
-        { key: "NEXTAUTH_URL", value: prodUrl, target: ["production"], type: "plain" },
+        { key: "AUTH_SECRET", value: authSecret, target: ["production", "preview"], type: "encrypted" },
+        { key: "AUTH_URL", value: prodUrl, target: ["production", "preview"], type: "plain" },
         { key: "RESEND_API_KEY", value: config.resendApiKey, target: ["production", "preview"], type: "encrypted" },
         { key: "EMAIL_FROM", value: config.emailFrom, target: ["production", "preview"], type: "plain" },
+        { key: "NEXT_PUBLIC_APP_NAME", value: appDisplayName, target: ["production", "preview"], type: "plain" },
+        { key: "NEXT_PUBLIC_APP_URL", value: prodUrl, target: ["production", "preview"], type: "plain" },
       ],
       config.vercelTeamId
     );
     stepSuccess(s9, "Vercel project configured");
 
     // Step 10: Wait for deployment
-    const s10 = stepStart(10, "Waiting for deployment...");
+    const s10 = stepStart(10, "Waiting for deployment...", TOTAL_STEPS);
     let deploymentUrl: string;
     try {
       deploymentUrl = await vercel.waitForDeployment(
@@ -194,19 +205,27 @@ export async function createCommand(
       deploymentUrl = prodUrl;
     }
 
-    // Update NEXTAUTH_URL if the actual deployment URL differs from the assumed one
+    // If the actual URL differs from assumed, update env vars and trigger a redeploy
     if (deploymentUrl !== prodUrl) {
       const envVars = await vercel.listEnvVars(config.vercelToken, vercelProjectId, config.vercelTeamId);
-      const nextauthUrlVar = envVars.find((v) => v.key === "NEXTAUTH_URL");
-      if (nextauthUrlVar) {
-        await vercel.updateEnvVar(
-          config.vercelToken,
-          vercelProjectId,
-          nextauthUrlVar.id,
-          deploymentUrl,
-          ["production"],
-          config.vercelTeamId
-        );
+      for (const key of ["AUTH_URL", "NEXT_PUBLIC_APP_URL"]) {
+        const match = envVars.find((v) => v.key === key);
+        if (match) {
+          await vercel.updateEnvVar(
+            config.vercelToken,
+            vercelProjectId,
+            match.id,
+            deploymentUrl,
+            ["production", "preview"],
+            config.vercelTeamId
+          );
+        }
+      }
+
+      // Trigger redeploy so NEXT_PUBLIC_* vars are rebuilt with correct values
+      const latest = await vercel.getLatestDeployment(config.vercelToken, vercelProjectId, config.vercelTeamId);
+      if (latest) {
+        await vercel.triggerRedeploy(config.vercelToken, latest.id, appName, config.vercelTeamId);
       }
     }
 
@@ -237,12 +256,47 @@ export async function createCommand(
     const message = err instanceof Error ? err.message : String(err);
     error(`\nFailed: ${message}\n`);
 
-    if (created.length > 0) {
-      console.log(chalk.yellow("The following resources were created before the failure:"));
-      for (const item of created) {
-        console.log(chalk.yellow(`  • ${item}`));
+    // Automatic rollback of created resources (reverse order)
+    console.log(chalk.yellow("Rolling back created resources..."));
+
+    if (vercelProjectId) {
+      try {
+        await vercel.deleteProject(config.vercelToken, vercelProjectId, config.vercelTeamId);
+        success("Rolled back Vercel project");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warn(`Failed to roll back Vercel project: ${msg}`);
       }
-      console.log(chalk.yellow("\nYou may need to clean these up manually, or use `appfactory destroy`."));
+    }
+
+    if (githubRepoCreated) {
+      try {
+        github.deleteRepo(config.githubOrg, appName);
+        success("Rolled back GitHub repo");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warn(`Failed to roll back GitHub repo: ${msg}`);
+      }
+    }
+
+    if (neonProjectId) {
+      try {
+        await neon.deleteProject(config.neonApiKey, neonProjectId);
+        success("Rolled back Neon project");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warn(`Failed to roll back Neon project: ${msg}`);
+      }
+    }
+
+    if (createdLocalDir && fs.existsSync(appDir)) {
+      try {
+        fs.rmSync(appDir, { recursive: true, force: true });
+        success("Rolled back local directory");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warn(`Failed to roll back local directory: ${msg}`);
+      }
     }
 
     process.exit(1);

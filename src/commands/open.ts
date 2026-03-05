@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readConfig, configExists } from "../lib/config.js";
 import { findApp } from "../lib/registry.js";
 import { error, success } from "../lib/logger.js";
@@ -15,7 +15,7 @@ function openUrl(url: string): void {
         ? "start"
         : "xdg-open";
 
-  execSync(`${cmd} "${url}"`, { stdio: "pipe" });
+  execFileSync(cmd, [url], { stdio: "pipe" });
 }
 
 export async function openCommand(

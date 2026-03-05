@@ -4,6 +4,7 @@ import { writeConfig, configExists, getConfigPath } from "../lib/config.js";
 import { writeRegistry, readRegistry } from "../lib/registry.js";
 import { validateApiKey as validateNeonKey } from "../services/neon.js";
 import { validateToken as validateVercelToken } from "../services/vercel.js";
+import { validateApiKey as validateResendKey } from "../services/resend.js";
 import { checkAuthStatus, repoExists } from "../services/github.js";
 import { success, error, info } from "../lib/logger.js";
 import type { AppFactoryConfig } from "../types.js";
@@ -85,7 +86,8 @@ export async function initCommand(): Promise<void> {
       type: "input",
       name: "emailFrom",
       message: "Email from address (e.g. noreply@yourdomain.com):",
-      validate: (v: string) => (v.includes("@") ? true : "Must be a valid email"),
+      validate: (v: string) =>
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? true : "Must be a valid email (e.g. noreply@yourdomain.com)",
     },
   ]);
 
@@ -117,6 +119,15 @@ export async function initCommand(): Promise<void> {
     process.exit(1);
   }
   success("Vercel token valid");
+
+  // Validate Resend API key
+  info("Validating Resend API key...");
+  const resendValid = await validateResendKey(answers.resendApiKey);
+  if (!resendValid) {
+    error("Invalid Resend API key");
+    process.exit(1);
+  }
+  success("Resend API key valid");
 
   const config: AppFactoryConfig = {
     neonApiKey: answers.neonApiKey,
