@@ -68,7 +68,7 @@ export async function destroyCommand(name: string): Promise<void> {
 
   // Delete GitHub repo
   try {
-    github.deleteRepo(app.githubRepo.split("/")[0], app.githubRepo.split("/")[1]);
+    github.deleteRepo(app.githubRepo.split("/")[0], app.githubRepo.split("/")[1], config.githubToken);
     success("GitHub repo deleted");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

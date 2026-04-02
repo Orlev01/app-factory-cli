@@ -1,10 +1,12 @@
 export interface AppFactoryConfig {
+  githubToken: string;
+  githubOrg: string;
+  githubSshHost: string;
+  templateRepo: string;
+  appsDirectory: string;
   neonApiKey: string;
   vercelToken: string;
   resendApiKey: string;
-  githubOrg: string;
-  templateRepo: string;
-  appsDirectory: string;
   emailFrom: string;
   vercelTeamId?: string;
 }

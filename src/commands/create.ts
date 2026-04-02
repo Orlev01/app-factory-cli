@@ -98,7 +98,7 @@ export async function createCommand(
       stepSuccess(s1, "Source app copied");
     } else {
       const s1 = stepStart(1, "Cloning template...", TOTAL_STEPS);
-      template.cloneTemplate(config.templateRepo, appDir);
+      template.cloneTemplate(config.templateRepo, appDir, config.githubSshHost);
       stepSuccess(s1, "Template cloned");
     }
     createdLocalDir = true;
@@ -155,13 +155,13 @@ export async function createCommand(
 
     // Step 7: Create GitHub repo
     const s7 = stepStart(7, "Creating GitHub repository...", TOTAL_STEPS);
-    github.createRepo(config.githubOrg, appName);
+    github.createRepo(config.githubOrg, appName, config.githubToken);
     githubRepoCreated = true;
     stepSuccess(s7, "GitHub repository created");
 
     // Step 8: Push to GitHub
     const s8 = stepStart(8, "Pushing to GitHub...", TOTAL_STEPS);
-    github.pushInitialCommit(appDir, config.githubOrg, appName);
+    github.pushInitialCommit(appDir, config.githubOrg, appName, config.githubSshHost);
     stepSuccess(s8, "Code pushed to GitHub");
 
     // Step 9: Create Vercel project + set env vars (production + preview URLs)
@@ -271,7 +271,7 @@ export async function createCommand(
 
     if (githubRepoCreated) {
       try {
-        github.deleteRepo(config.githubOrg, appName);
+        github.deleteRepo(config.githubOrg, appName, config.githubToken);
         success("Rolled back GitHub repo");
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

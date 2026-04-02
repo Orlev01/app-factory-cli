@@ -47,7 +47,7 @@ export async function statusCommand(
   const [vercelResult, neonResult, githubResult] = await Promise.allSettled([
     checkVercel(config.vercelToken, app.vercelProjectId, app.url, config.vercelTeamId),
     checkNeon(config.neonApiKey, app.neonProjectId),
-    checkGitHub(app.githubRepo),
+    checkGitHub(app.githubRepo, config.githubToken),
   ]);
 
   // Vercel
@@ -157,7 +157,8 @@ async function checkNeon(
 }
 
 async function checkGitHub(
-  repo: string
+  repo: string,
+  token: string
 ): Promise<{
   exists: boolean;
   defaultBranch: string;
@@ -165,7 +166,7 @@ async function checkGitHub(
   pushedAt: string;
 }> {
   const [org, name] = repo.split("/");
-  const info = await github.getRepoInfo(org, name);
+  const info = await github.getRepoInfo(org, name, token);
   return {
     exists: info.exists,
     defaultBranch: info.defaultBranch,

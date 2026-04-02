@@ -19,12 +19,14 @@ export function configExists(): boolean {
 }
 
 const REQUIRED_KEYS: (keyof AppFactoryConfig)[] = [
+  "githubToken",
+  "githubOrg",
+  "githubSshHost",
+  "templateRepo",
+  "appsDirectory",
   "neonApiKey",
   "vercelToken",
   "resendApiKey",
-  "githubOrg",
-  "templateRepo",
-  "appsDirectory",
   "emailFrom",
 ];
 

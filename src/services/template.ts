@@ -12,14 +12,15 @@ function run(cmd: string, args: string[], cwd?: string): string {
 
 export function cloneTemplate(
   templateRepo: string,
-  targetDir: string
+  targetDir: string,
+  sshHost: string = "github.com"
 ): void {
   if (fs.existsSync(targetDir)) {
     throw new Error(`Directory already exists: ${targetDir}`);
   }
 
-  // Shallow clone
-  run("git", ["clone", "--depth", "1", `https://github.com/${templateRepo}.git`, targetDir]);
+  // Shallow clone via SSH using the configured host alias
+  run("git", ["clone", "--depth", "1", `git@${sshHost}:${templateRepo}.git`, targetDir]);
 
   // Strip .git and reinitialize
   const gitDir = path.join(targetDir, ".git");

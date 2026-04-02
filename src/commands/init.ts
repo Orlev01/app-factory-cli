@@ -5,7 +5,7 @@ import { writeRegistry, readRegistry } from "../lib/registry.js";
 import { validateApiKey as validateNeonKey } from "../services/neon.js";
 import { validateToken as validateVercelToken } from "../services/vercel.js";
 import { validateApiKey as validateResendKey } from "../services/resend.js";
-import { checkAuthStatus, repoExists } from "../services/github.js";
+import { checkGhInstalled, validateToken as validateGithubToken, repoExists } from "../services/github.js";
 import { success, error, info } from "../lib/logger.js";
 import type { AppFactoryConfig } from "../types.js";
 
@@ -27,19 +27,46 @@ export async function initCommand(): Promise<void> {
     }
   }
 
-  // Step 1: GitHub CLI auth
-  info("Checking GitHub CLI authentication...");
-  if (!checkAuthStatus()) {
-    error("GitHub CLI is not authenticated. Run `gh auth login` first.");
+  // Check gh CLI is installed (needed for repo operations)
+  info("Checking GitHub CLI is installed...");
+  if (!checkGhInstalled()) {
+    error("GitHub CLI (gh) is not installed. Install it with: brew install gh");
     process.exit(1);
   }
-  success("GitHub CLI authenticated");
+  success("GitHub CLI found");
+
+  // Step 1: GitHub token
+  const { githubToken } = await inquirer.prompt([
+    {
+      type: "password",
+      name: "githubToken",
+      message: "GitHub personal access token (for your personal account):",
+      mask: "*",
+      validate: (v: string) => (v.length > 0 ? true : "Required"),
+    },
+  ]);
+
+  info("Validating GitHub token...");
+  const ghResult = await validateGithubToken(githubToken);
+  if (!ghResult.valid) {
+    error("Invalid GitHub token");
+    process.exit(1);
+  }
+  success(`GitHub token valid — authenticated as ${chalk.bold(ghResult.login)}`);
 
   const answers = await inquirer.prompt([
     {
       type: "input",
       name: "githubOrg",
-      message: "GitHub org or username:",
+      message: "GitHub org or username for new repos:",
+      default: ghResult.login,
+      validate: (v: string) => (v.length > 0 ? true : "Required"),
+    },
+    {
+      type: "input",
+      name: "githubSshHost",
+      message: "GitHub SSH host alias (default github.com, change if using a custom SSH config):",
+      default: "github.com",
       validate: (v: string) => (v.length > 0 ? true : "Required"),
     },
     {
@@ -91,9 +118,9 @@ export async function initCommand(): Promise<void> {
     },
   ]);
 
-  // Validate template repo
+  // Validate template repo (using the GitHub token)
   info("Verifying template repo access...");
-  if (!repoExists(answers.templateRepo.split("/")[0], answers.templateRepo.split("/")[1])) {
+  if (!repoExists(answers.templateRepo.split("/")[0], answers.templateRepo.split("/")[1], githubToken)) {
     error(`Cannot access template repo: ${answers.templateRepo}`);
     process.exit(1);
   }
@@ -130,12 +157,14 @@ export async function initCommand(): Promise<void> {
   success("Resend API key valid");
 
   const config: AppFactoryConfig = {
+    githubToken,
+    githubOrg: answers.githubOrg,
+    githubSshHost: answers.githubSshHost,
+    templateRepo: answers.templateRepo,
+    appsDirectory: answers.appsDirectory,
     neonApiKey: answers.neonApiKey,
     vercelToken: answers.vercelToken,
     resendApiKey: answers.resendApiKey,
-    githubOrg: answers.githubOrg,
-    templateRepo: answers.templateRepo,
-    appsDirectory: answers.appsDirectory,
     emailFrom: answers.emailFrom,
     ...(answers.vercelTeamId ? { vercelTeamId: answers.vercelTeamId } : {}),
   };
